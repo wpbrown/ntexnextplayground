@@ -5,7 +5,8 @@ use std::{
 };
 
 use futures_util::FutureExt;
-use log::{error, info, trace, debug};
+use log::{debug, error, info, trace};
+use movable::MovableContainerCall;
 use ntex::{
     service::apply,
     task::LocalWaker,
@@ -161,12 +162,13 @@ async fn mock_dispatcher<S: Service<u32> + 'static>(srv: S) {
 
 fn mock_srv_call<S: Service<u32> + 'static>(container: &Container<S>, value: u32) {
     let container = container.clone();
+    let srv_call = MovableContainerCall::create(container, value);
     ntex::rt::spawn(async move {
         // simulate degenerate wakeup order from the executor
         // ntex::time::sleep(Millis(128 - value)).await;
 
         trace!("Dispatch mock call with value: {}", value);
-        let srv_call = container.call(value);
+        //let srv_call = container.call(value);
         trace!("Dispatched mock call with value: {}", value);
         let _ = srv_call.await;
         trace!("Mock response completed with value: {}", value);
@@ -178,4 +180,43 @@ where
     T: Ord,
 {
     data.windows(2).all(|w| w[0] <= w[1])
+}
+
+mod movable {
+    use ntex::{Container, ServiceCall};
+    use ouroboros::self_referencing;
+    use std::{future::Future, pin::Pin};
+
+    #[self_referencing]
+    pub struct MovableContainerCall<S: ntex::Service<R> + 'static, R: 'static> {
+        container: Container<S>,
+        #[borrows(container)]
+        #[not_covariant]
+        service_call: ServiceCall<'this, S, R>,
+    }
+
+    impl<S: ntex::Service<R> + 'static, R: 'static> MovableContainerCall<S, R> {
+        pub fn create(container: Container<S>, request: R) -> Self {
+            MovableContainerCallBuilder {
+                container,
+                service_call_builder: |container: &Container<S>| container.call(request),
+            }
+            .build()
+        }
+    }
+
+    impl<S: ntex::Service<R> + 'static, R: 'static> Future for MovableContainerCall<S, R> {
+        type Output = <ServiceCall<'static, S, R> as Future>::Output;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            unsafe {
+                // pin-project-lite not compatible with ouroborous
+                let this = self.get_unchecked_mut();
+                this.with_service_call_mut(|f| Pin::new_unchecked(f).poll(cx))
+            }
+        }
+    }
 }

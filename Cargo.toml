@@ -8,6 +8,7 @@ ntex = { path = "../../ntex-master/ntex", features=["tokio"] }
 log = "0.4"
 env_logger = "0.10"
 futures-util = "0.3"
+ouroboros = "0.17"
 
 [patch.crates-io]
 ntex-bytes = { path = "../../ntex-master/ntex-bytes" }
