@@ -1,0 +1,25 @@
+[package]
+name = "tryntexnext"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ntex = { path = "../../ntex-master/ntex", features=["tokio"] }
+log = "0.4"
+env_logger = "0.10"
+futures-util = "0.3"
+
+[patch.crates-io]
+ntex-bytes = { path = "../../ntex-master/ntex-bytes" }
+ntex-codec = { path = "../../ntex-master/ntex-codec" }
+ntex-connect = { path = "../../ntex-master/ntex-connect" }
+ntex-h2 = { git = "https://github.com/ntex-rs/ntex-h2.git", branch = "main" }
+ntex-http = { path = "../../ntex-master/ntex-http" }
+ntex-io = { path = "../../ntex-master/ntex-io" }
+ntex-macros = { path = "../../ntex-master/ntex-macros" }
+ntex-router = { path = "../../ntex-master/ntex-router" }
+ntex-rt = { path = "../../ntex-master/ntex-rt" }
+ntex-service = { path = "../../ntex-master/ntex-service" }
+ntex-tls = { path = "../../ntex-master/ntex-tls" }
+ntex-tokio = { path = "../../ntex-master/ntex-tokio" }
+ntex-util = { path = "../../ntex-master/ntex-util" }
