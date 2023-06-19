@@ -5,7 +5,7 @@ use std::{
 };
 
 use futures_util::FutureExt;
-use log::{error, info, trace};
+use log::{error, info, trace, debug};
 use ntex::{
     service::apply,
     task::LocalWaker,
@@ -104,6 +104,12 @@ impl Service<u32> for TestService {
 
     fn poll_shutdown(&self, _cx: &mut std::task::Context<'_>) -> Poll<()> {
         if self.inputs.borrow().len() == TEST_SIZE {
+            debug!("TestService fully processed: {:?}", self.inputs.borrow());
+            if !is_sorted(&self.inputs.borrow()) {
+                error!("TestService inputs are not in order");
+            } else {
+                info!("TestService inputs are in order");
+            }
             Poll::Ready(())
         } else {
             self.shutdown_waker.register(_cx.waker());
@@ -165,4 +171,11 @@ fn mock_srv_call<S: Service<u32> + 'static>(container: &Container<S>, value: u32
         let _ = srv_call.await;
         trace!("Mock response completed with value: {}", value);
     });
+}
+
+fn is_sorted<T>(data: &[T]) -> bool
+where
+    T: Ord,
+{
+    data.windows(2).all(|w| w[0] <= w[1])
 }
