@@ -410,7 +410,7 @@ checksum = "56902c3f29ce7afbecc1d088dfd2e3108033f3c02041c70788ed94280a3d5261"
 
 [[package]]
 name = "ntex"
-version = "0.7.0-beta.1"
+version = "0.7.0-beta.2"
 dependencies = [
  "async-channel",
  "async-oneshot",
@@ -483,8 +483,8 @@ dependencies = [
 
 [[package]]
 name = "ntex-h2"
-version = "0.3.0-beta.1"
-source = "git+https://github.com/ntex-rs/ntex-h2.git?branch=main#298ea9421fb2f119bd776a1a148989641f144503"
+version = "0.3.0-beta.2"
+source = "git+https://github.com/ntex-rs/ntex-h2.git?branch=container-call#a1348432b9c9bc99aef9cd46c54e8724c53b6d3c"
 dependencies = [
  "bitflags",
  "fxhash",

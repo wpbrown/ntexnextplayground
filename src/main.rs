@@ -26,7 +26,7 @@ async fn main() {
     let factory = TestServiceFactory::default();
     let control = factory.control();
     let factory = apply(OneRequest, factory);
-    let factory = apply(Buffer::default().buf_size(6), factory);
+    let factory = apply(Buffer::default().buf_size(4), factory);
     let dispatcher = ntex::rt::spawn(new_mock_dispatcher(factory).await);
 
     control.set_ready();
@@ -156,17 +156,19 @@ async fn mock_dispatcher<S: Service<u32> + 'static>(srv: S) {
     let container_srv = Container::new(srv);
 
     for i in 0..TEST_SIZE {
+        trace!("wait for service readiness");
         let _ = poll_fn(|cx| container_srv.poll_ready(cx)).await;
+        trace!("service readiness is ready");
         if USE_STATIC_CALL {
             mock_srv_call_in_dispatch(
-                &container_srv,
+                container_srv.clone(),
                 i,
                 state.complete.clone(),
                 state.inflight.clone(),
             );
         } else {
             mock_srv_call_in_spawn(
-                &container_srv,
+                container_srv.clone(),
                 i,
                 state.complete.clone(),
                 state.inflight.clone(),
@@ -182,6 +184,10 @@ async fn mock_dispatcher<S: Service<u32> + 'static>(srv: S) {
         }
         trace!("* wait for srv ready: {}", state.inflight.get());
         let _ = poll_fn(|cx| container_srv.poll_ready(cx)).await;
+
+        if state.inflight.get() == 0 {
+            break;
+        }
         trace!("* wait for task complete: {}", state.inflight.get());
         state.complete.wait().await;
     }
@@ -195,16 +201,15 @@ async fn mock_dispatcher<S: Service<u32> + 'static>(srv: S) {
 }
 
 fn mock_srv_call_in_dispatch<S: Service<u32> + 'static>(
-    container: &Container<S>,
+    container: Container<S>,
     value: u32,
     complete: Condition,
     inflight: Rc<Cell<u32>>,
 ) {
-    let container = container.clone();
     inflight.set(inflight.get() + 1);
-    trace!("Dispatch mock call with value: {}", value);
-    let srv_call = container.static_call(value);
-    trace!("Dispatched mock call with value: {}", value);
+    trace!("Dispatch mock static_call with value: {}", value);
+    let srv_call = container.call(value).into_static();
+    trace!("Dispatched mock static_call with value: {}", value);
     ntex::rt::spawn(async move {
         if SIMULATE_DEGENERATE_WAKEUP {
             degenerate_sleep(value).await;
@@ -219,13 +224,11 @@ fn mock_srv_call_in_dispatch<S: Service<u32> + 'static>(
 }
 
 fn mock_srv_call_in_spawn<S: Service<u32> + 'static>(
-    container: &Container<S>,
+    container: Container<S>,
     value: u32,
     complete: Condition,
     inflight: Rc<Cell<u32>>,
 ) {
-    let container = container.clone();
-    inflight.set(inflight.get() + 1);
     ntex::rt::spawn(async move {
         if SIMULATE_DEGENERATE_WAKEUP {
             degenerate_sleep(value).await;
