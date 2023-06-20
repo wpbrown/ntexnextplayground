@@ -229,6 +229,7 @@ fn mock_srv_call_in_spawn<S: Service<u32> + 'static>(
     complete: Condition,
     inflight: Rc<Cell<u32>>,
 ) {
+    inflight.set(inflight.get() + 1);
     ntex::rt::spawn(async move {
         if SIMULATE_DEGENERATE_WAKEUP {
             degenerate_sleep(value).await;
