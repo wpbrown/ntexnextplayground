@@ -7,6 +7,7 @@ use std::{
 use futures_util::FutureExt;
 use log::{debug, error, info, trace};
 use ntex::{
+    channel::condition::Condition,
     service::apply,
     task::LocalWaker,
     time::Millis,
@@ -15,7 +16,9 @@ use ntex::{
 };
 use std::future::Future;
 
-const TEST_SIZE: usize = 16;
+const TEST_SIZE: u32 = 16;
+const SIMULATE_DEGENERATE_WAKEUP: bool = true;
+const USE_STATIC_CALL: bool = true;
 
 #[ntex::main]
 async fn main() {
@@ -23,7 +26,7 @@ async fn main() {
     let factory = TestServiceFactory::default();
     let control = factory.control();
     let factory = apply(OneRequest, factory);
-    //let factory = apply(Buffer::default().buf_size(6), factory);
+    let factory = apply(Buffer::default().buf_size(6), factory);
     let dispatcher = ntex::rt::spawn(new_mock_dispatcher(factory).await);
 
     control.set_ready();
@@ -103,7 +106,7 @@ impl Service<u32> for TestService {
     }
 
     fn poll_shutdown(&self, _cx: &mut std::task::Context<'_>) -> Poll<()> {
-        if self.inputs.borrow().len() == TEST_SIZE {
+        if self.inputs.borrow().len() as u32 == TEST_SIZE {
             debug!("TestService fully processed: {:?}", self.inputs.borrow());
             if !is_sorted(&self.inputs.borrow()) {
                 error!("TestService inputs are not in order");
@@ -124,7 +127,7 @@ impl Service<u32> for TestService {
             self.inputs.borrow_mut().push(value);
             info!("TestService processed: {}", value);
 
-            if self.inputs.borrow().len() == TEST_SIZE {
+            if self.inputs.borrow().len() as u32 == TEST_SIZE {
                 self.shutdown_waker.wake();
             }
 
@@ -132,6 +135,12 @@ impl Service<u32> for TestService {
         }
         .boxed_local()
     }
+}
+
+#[derive(Default)]
+struct DispatcherState {
+    complete: Condition,
+    inflight: Rc<Cell<u32>>,
 }
 
 async fn new_mock_dispatcher<Sf: ServiceFactory<u32> + 'static>(
@@ -143,12 +152,38 @@ async fn new_mock_dispatcher<Sf: ServiceFactory<u32> + 'static>(
 }
 
 async fn mock_dispatcher<S: Service<u32> + 'static>(srv: S) {
+    let state = DispatcherState::default();
     let container_srv = Container::new(srv);
 
-    for i in 0..16 {
+    for i in 0..TEST_SIZE {
         let _ = poll_fn(|cx| container_srv.poll_ready(cx)).await;
-        mock_srv_call(&container_srv, i);
+        if USE_STATIC_CALL {
+            mock_srv_call_in_dispatch(
+                &container_srv,
+                i,
+                state.complete.clone(),
+                state.inflight.clone(),
+            );
+        } else {
+            mock_srv_call_in_spawn(
+                &container_srv,
+                i,
+                state.complete.clone(),
+                state.inflight.clone(),
+            );
+        }
         ntex::time::sleep(Millis(10)).await;
+    }
+
+    info!("wait for inflight: {}", state.inflight.get());
+    loop {
+        if state.inflight.get() == 0 {
+            break;
+        }
+        trace!("* wait for srv ready: {}", state.inflight.get());
+        let _ = poll_fn(|cx| container_srv.poll_ready(cx)).await;
+        trace!("* wait for task complete: {}", state.inflight.get());
+        state.complete.wait().await;
     }
 
     info!("waiting for shutdown");
@@ -159,20 +194,59 @@ async fn mock_dispatcher<S: Service<u32> + 'static>(srv: S) {
     info!("dispatcher is shutting down");
 }
 
-fn mock_srv_call<S: Service<u32> + 'static>(container: &Container<S>, value: u32) {
+fn mock_srv_call_in_dispatch<S: Service<u32> + 'static>(
+    container: &Container<S>,
+    value: u32,
+    complete: Condition,
+    inflight: Rc<Cell<u32>>,
+) {
     let container = container.clone();
-    //let srv_call = movable::MovableContainerCall::create(container, value);
-    let srv_call = movablesafe::create(container, value);
+    inflight.set(inflight.get() + 1);
+    trace!("Dispatch mock call with value: {}", value);
+    let srv_call = container.static_call(value);
+    trace!("Dispatched mock call with value: {}", value);
     ntex::rt::spawn(async move {
-        // simulate degenerate wakeup order from the executor
-        // ntex::time::sleep(Millis(128 - value)).await;
+        if SIMULATE_DEGENERATE_WAKEUP {
+            degenerate_sleep(value).await;
+        }
 
-        trace!("Dispatch mock call with value: {}", value);
-        //let srv_call = container.call(value);
-        trace!("Dispatched mock call with value: {}", value);
+        trace!("Waiting for mock response future with value: {}", value);
         let _ = srv_call.await;
         trace!("Mock response completed with value: {}", value);
+        inflight.set(inflight.get() - 1);
+        complete.notify();
     });
+}
+
+fn mock_srv_call_in_spawn<S: Service<u32> + 'static>(
+    container: &Container<S>,
+    value: u32,
+    complete: Condition,
+    inflight: Rc<Cell<u32>>,
+) {
+    let container = container.clone();
+    inflight.set(inflight.get() + 1);
+    ntex::rt::spawn(async move {
+        if SIMULATE_DEGENERATE_WAKEUP {
+            degenerate_sleep(value).await;
+        }
+
+        trace!("Dispatch mock call with value: {}", value);
+        let srv_call = container.call(value);
+        trace!("Dispatched mock call with value: {}", value);
+
+        trace!("Waiting for mock response future with value: {}", value);
+        let _ = srv_call.await;
+        trace!("Mock response completed with value: {}", value);
+        inflight.set(inflight.get() - 1);
+        complete.notify();
+    });
+}
+
+async fn degenerate_sleep(value: u32) {
+    const SLEEP_INCREMENT: u32 = 5;
+    const MAX_SLEEP: u32 = (TEST_SIZE + 1) * SLEEP_INCREMENT;
+    ntex::time::sleep(Millis(MAX_SLEEP - value * SLEEP_INCREMENT)).await;
 }
 
 fn is_sorted<T>(data: &[T]) -> bool
@@ -180,70 +254,4 @@ where
     T: Ord,
 {
     data.windows(2).all(|w| w[0] <= w[1])
-}
-
-// with ouroboros
-mod movable {
-    use ntex::{Container, ServiceCall};
-    use ouroboros::self_referencing;
-    use std::{future::Future, pin::Pin};
-
-    #[self_referencing]
-    pub struct MovableContainerCall<S: ntex::Service<R> + 'static, R: 'static> {
-        container: Container<S>,
-        #[borrows(container)]
-        #[not_covariant]
-        service_call: ServiceCall<'this, S, R>,
-    }
-
-    impl<S: ntex::Service<R> + 'static, R: 'static> MovableContainerCall<S, R> {
-        pub fn create(container: Container<S>, request: R) -> Self {
-            MovableContainerCallBuilder {
-                container,
-                service_call_builder: |container: &Container<S>| container.call(request),
-            }
-            .build()
-        }
-    }
-
-    impl<S: ntex::Service<R> + 'static, R: 'static> Future for MovableContainerCall<S, R> {
-        type Output = <ServiceCall<'static, S, R> as Future>::Output;
-
-        fn poll(
-            self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Self::Output> {
-            unsafe {
-                // pin-project-lite not compatible with ouroborous
-                let this = self.get_unchecked_mut();
-                this.with_service_call_mut(|f| Pin::new_unchecked(f).poll(cx))
-            }
-        }
-    }
-}
-
-mod movablesafe {
-    use std::{future::Future, task::Poll};
-    use futures_util::FutureExt;
-    use ntex::{Container, util::poll_fn};
-
-    pub fn create<S: ntex::Service<R> + 'static, R: 'static>(
-        container: Container<S>,
-        request: R,
-    ) -> impl Future<Output = Result<S::Response, S::Error>> {
-        let mut fut = async move {
-            let service_call = container.call(request);
-            let mut first = true;
-            poll_fn(|_| {
-                if std::mem::replace(&mut first, false) {
-                    Poll::Pending
-                } else {
-                    Poll::Ready(())
-                }
-            }).await;
-            service_call.await
-        }.boxed_local();
-        let _ = fut.poll_unpin(&mut std::task::Context::from_waker(&noop_waker::noop_waker()));
-        fut
-    }
 }

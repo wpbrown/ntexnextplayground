@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "ntex-io"
-version = "0.3.0-beta.1"
+version = "0.3.0-beta.2"
 dependencies = [
  "bitflags",
  "log",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "ntex-service"
-version = "1.2.0-beta.1"
+version = "1.2.0-beta.3"
 dependencies = [
  "pin-project-lite",
  "slab",
