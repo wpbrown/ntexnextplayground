@@ -6,7 +6,6 @@ use std::{
 
 use futures_util::FutureExt;
 use log::{debug, error, info, trace};
-use movable::MovableContainerCall;
 use ntex::{
     service::apply,
     task::LocalWaker,
@@ -24,7 +23,7 @@ async fn main() {
     let factory = TestServiceFactory::default();
     let control = factory.control();
     let factory = apply(OneRequest, factory);
-    let factory = apply(Buffer::default().buf_size(6), factory);
+    //let factory = apply(Buffer::default().buf_size(6), factory);
     let dispatcher = ntex::rt::spawn(new_mock_dispatcher(factory).await);
 
     control.set_ready();
@@ -162,7 +161,8 @@ async fn mock_dispatcher<S: Service<u32> + 'static>(srv: S) {
 
 fn mock_srv_call<S: Service<u32> + 'static>(container: &Container<S>, value: u32) {
     let container = container.clone();
-    let srv_call = MovableContainerCall::create(container, value);
+    //let srv_call = movable::MovableContainerCall::create(container, value);
+    let srv_call = movablesafe::create(container, value);
     ntex::rt::spawn(async move {
         // simulate degenerate wakeup order from the executor
         // ntex::time::sleep(Millis(128 - value)).await;
@@ -182,6 +182,7 @@ where
     data.windows(2).all(|w| w[0] <= w[1])
 }
 
+// with ouroboros
 mod movable {
     use ntex::{Container, ServiceCall};
     use ouroboros::self_referencing;
@@ -218,5 +219,31 @@ mod movable {
                 this.with_service_call_mut(|f| Pin::new_unchecked(f).poll(cx))
             }
         }
+    }
+}
+
+mod movablesafe {
+    use std::{future::Future, task::Poll};
+    use futures_util::FutureExt;
+    use ntex::{Container, util::poll_fn};
+
+    pub fn create<S: ntex::Service<R> + 'static, R: 'static>(
+        container: Container<S>,
+        request: R,
+    ) -> impl Future<Output = Result<S::Response, S::Error>> {
+        let mut fut = async move {
+            let service_call = container.call(request);
+            let mut first = true;
+            poll_fn(|_| {
+                if std::mem::replace(&mut first, false) {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(())
+                }
+            }).await;
+            service_call.await
+        }.boxed_local();
+        let _ = fut.poll_unpin(&mut std::task::Context::from_waker(&noop_waker::noop_waker()));
+        fut
     }
 }

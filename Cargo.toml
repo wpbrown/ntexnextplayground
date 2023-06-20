@@ -9,6 +9,8 @@ log = "0.4"
 env_logger = "0.10"
 futures-util = "0.3"
 ouroboros = "0.17"
+noop-waker = "0.1"
+# pin-project-lite = "0.2"
 
 [patch.crates-io]
 ntex-bytes = { path = "../../ntex-master/ntex-bytes" }
