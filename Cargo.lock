@@ -484,7 +484,7 @@ dependencies = [
 [[package]]
 name = "ntex-h2"
 version = "0.3.0-beta.2"
-source = "git+https://github.com/ntex-rs/ntex-h2.git?branch=container-call#a1348432b9c9bc99aef9cd46c54e8724c53b6d3c"
+source = "git+https://github.com/ntex-rs/ntex-h2.git?branch=main#510e6a0b1a3fbef04e9cfe76828d3228934956ce"
 dependencies = [
  "bitflags",
  "fxhash",

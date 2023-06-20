@@ -121,6 +121,7 @@ impl Service<u32> for TestService {
     }
 
     fn call<'a>(&'a self, value: u32, _: ServiceCtx<'a, Self>) -> Self::Future<'a> {
+        debug!("TestService called with: {}", value);
         async move {
             ntex::time::sleep(Millis(10)).await;
 
@@ -208,7 +209,7 @@ fn mock_srv_call_in_dispatch<S: Service<u32> + 'static>(
 ) {
     inflight.set(inflight.get() + 1);
     trace!("Dispatch mock static_call with value: {}", value);
-    let srv_call = container.call(value).into_static();
+    let srv_call = container.container_call(value).into_static();
     trace!("Dispatched mock static_call with value: {}", value);
     ntex::rt::spawn(async move {
         if SIMULATE_DEGENERATE_WAKEUP {
