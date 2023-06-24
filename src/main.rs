@@ -49,6 +49,9 @@ async fn main() {
     info!("control is ready");
 
     let _ = dispatcher.await;
+    
+    info!("test shutting down");
+    ntex::time::sleep(Millis(1000)).await;
 }
 
 #[derive(Default)]
