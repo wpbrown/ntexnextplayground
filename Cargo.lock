@@ -410,7 +410,7 @@ checksum = "56902c3f29ce7afbecc1d088dfd2e3108033f3c02041c70788ed94280a3d5261"
 
 [[package]]
 name = "ntex"
-version = "0.7.0-beta.2"
+version = "0.7.2"
 dependencies = [
  "async-channel",
  "async-oneshot",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "ntex-connect"
-version = "0.3.0-beta.1"
+version = "0.3.0"
 dependencies = [
  "log",
  "ntex-bytes",
@@ -483,8 +483,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-h2"
-version = "0.3.0-beta.2"
-source = "git+https://github.com/ntex-rs/ntex-h2.git?branch=main#510e6a0b1a3fbef04e9cfe76828d3228934956ce"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a211cdee897c605b9b49726386cc86d8728537faa4ef90714f50e95bb3e852f7"
 dependencies = [
  "bitflags",
  "fxhash",
@@ -514,7 +515,7 @@ dependencies = [
 
 [[package]]
 name = "ntex-io"
-version = "0.3.0-beta.2"
+version = "0.3.1"
 dependencies = [
  "bitflags",
  "log",
@@ -558,7 +559,7 @@ dependencies = [
 
 [[package]]
 name = "ntex-service"
-version = "1.2.0-beta.3"
+version = "1.2.1"
 dependencies = [
  "pin-project-lite",
  "slab",
@@ -566,7 +567,7 @@ dependencies = [
 
 [[package]]
 name = "ntex-tls"
-version = "0.3.0-beta.1"
+version = "0.3.0"
 dependencies = [
  "log",
  "ntex-bytes",
@@ -578,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "ntex-tokio"
-version = "0.3.0-beta.0"
+version = "0.3.0"
 dependencies = [
  "log",
  "ntex-bytes",
@@ -590,7 +591,7 @@ dependencies = [
 
 [[package]]
 name = "ntex-util"
-version = "0.3.0-beta.1"
+version = "0.3.0"
 dependencies = [
  "bitflags",
  "futures-core",

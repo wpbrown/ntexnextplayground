@@ -16,7 +16,6 @@ noop-waker = "0.1"
 ntex-bytes = { path = "../../ntex-master/ntex-bytes" }
 ntex-codec = { path = "../../ntex-master/ntex-codec" }
 ntex-connect = { path = "../../ntex-master/ntex-connect" }
-ntex-h2 = { git = "https://github.com/ntex-rs/ntex-h2.git", branch = "main" }
 ntex-http = { path = "../../ntex-master/ntex-http" }
 ntex-io = { path = "../../ntex-master/ntex-io" }
 ntex-macros = { path = "../../ntex-master/ntex-macros" }

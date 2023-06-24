@@ -12,13 +12,17 @@ use ntex::{
     task::LocalWaker,
     time::Millis,
     util::{buffer::Buffer, onerequest::OneRequest, poll_fn, BoxFuture, Ready},
-    Container, Service, ServiceCtx, ServiceFactory,
+    Pipeline, Service, ServiceCtx, ServiceFactory,
 };
 use std::future::Future;
 
 const TEST_SIZE: u32 = 16;
 const SIMULATE_DEGENERATE_WAKEUP: bool = true;
 const USE_STATIC_CALL: bool = true;
+const WAIT_FOR_INFLIGHT_BEFORE_SHUTDOWN: bool = false;
+const TIME_TO_PROCESS_REQUEST: u32 = 500;
+const BUFFER_SIZE: usize = 4;
+const CANCEL_ON_SHUTDOWN: bool = false;
 
 #[ntex::main]
 async fn main() {
@@ -26,8 +30,14 @@ async fn main() {
     let factory = TestServiceFactory::default();
     let control = factory.control();
     let factory = apply(OneRequest, factory);
-    let factory = apply(Buffer::default().buf_size(4), factory);
-    let dispatcher = ntex::rt::spawn(new_mock_dispatcher(factory).await);
+    let dispatcher = if CANCEL_ON_SHUTDOWN {
+        control.set_cancelled();
+        let factory = apply(Buffer::default().buf_size(4).cancel_on_shutdown(), factory);
+        ntex::rt::spawn(new_mock_dispatcher(factory).await)
+    } else {
+        let factory = apply(Buffer::default().buf_size(BUFFER_SIZE), factory);
+        ntex::rt::spawn(new_mock_dispatcher(factory).await)
+    };
 
     control.set_ready();
     info!("control is ready");
@@ -43,7 +53,8 @@ async fn main() {
 
 #[derive(Default)]
 struct TestControl {
-    ready: Rc<Cell<bool>>,
+    ready: Cell<bool>,
+    cancelled: Cell<bool>,
     waker: LocalWaker,
 }
 
@@ -55,6 +66,10 @@ impl TestControl {
 
     fn set_unready(&self) {
         self.ready.set(false);
+    }
+
+    fn set_cancelled(&self) {
+        self.cancelled.set(true);
     }
 }
 
@@ -106,8 +121,12 @@ impl Service<u32> for TestService {
     }
 
     fn poll_shutdown(&self, _cx: &mut std::task::Context<'_>) -> Poll<()> {
-        if self.inputs.borrow().len() as u32 == TEST_SIZE {
-            debug!("TestService fully processed: {:?}", self.inputs.borrow());
+        if self.inputs.borrow().len() as u32 == TEST_SIZE || self.control.cancelled.get() {
+            debug!(
+                "TestService fully processed: {:?} (cancelled: {})",
+                self.inputs.borrow(),
+                self.control.cancelled.get()
+            );
             if !is_sorted(&self.inputs.borrow()) {
                 error!("TestService inputs are not in order");
             } else {
@@ -123,7 +142,8 @@ impl Service<u32> for TestService {
     fn call<'a>(&'a self, value: u32, _: ServiceCtx<'a, Self>) -> Self::Future<'a> {
         debug!("TestService called with: {}", value);
         async move {
-            ntex::time::sleep(Millis(10)).await;
+            trace!("TestService future started with: {}", value);
+            ntex::time::sleep(Millis(TIME_TO_PROCESS_REQUEST)).await;
 
             self.inputs.borrow_mut().push(value);
             info!("TestService processed: {}", value);
@@ -154,7 +174,7 @@ async fn new_mock_dispatcher<Sf: ServiceFactory<u32> + 'static>(
 
 async fn mock_dispatcher<S: Service<u32> + 'static>(srv: S) {
     let state = DispatcherState::default();
-    let container_srv = Container::new(srv);
+    let container_srv = Pipeline::new(srv);
 
     for i in 0..TEST_SIZE {
         trace!("wait for service readiness");
@@ -179,37 +199,39 @@ async fn mock_dispatcher<S: Service<u32> + 'static>(srv: S) {
     }
 
     info!("wait for inflight: {}", state.inflight.get());
-    loop {
-        if state.inflight.get() == 0 {
-            break;
-        }
-        trace!("* wait for srv ready: {}", state.inflight.get());
-        let _ = poll_fn(|cx| container_srv.poll_ready(cx)).await;
+    if WAIT_FOR_INFLIGHT_BEFORE_SHUTDOWN {
+        loop {
+            if state.inflight.get() == 0 {
+                break;
+            }
+            trace!("* wait for srv ready: {}", state.inflight.get());
+            let _ = poll_fn(|cx| container_srv.poll_ready(cx)).await;
 
-        if state.inflight.get() == 0 {
-            break;
+            if state.inflight.get() == 0 {
+                break;
+            }
+            trace!("* wait for task complete: {}", state.inflight.get());
+            state.complete.wait().await;
         }
-        trace!("* wait for task complete: {}", state.inflight.get());
-        state.complete.wait().await;
     }
 
     info!("waiting for shutdown");
     let shutdown_fut = poll_fn(|cx| container_srv.poll_shutdown(cx));
-    let _ = ntex::time::timeout(Millis::from_secs(3), shutdown_fut)
+    let _ = ntex::time::timeout(Millis::from_secs(15), shutdown_fut)
         .await
         .map_err(|()| error!("shutdown timeout"));
     info!("dispatcher is shutting down");
 }
 
 fn mock_srv_call_in_dispatch<S: Service<u32> + 'static>(
-    container: Container<S>,
+    container: Pipeline<S>,
     value: u32,
     complete: Condition,
     inflight: Rc<Cell<u32>>,
 ) {
     inflight.set(inflight.get() + 1);
     trace!("Dispatch mock static_call with value: {}", value);
-    let srv_call = container.container_call(value).into_static();
+    let srv_call = container.call(value);
     trace!("Dispatched mock static_call with value: {}", value);
     ntex::rt::spawn(async move {
         if SIMULATE_DEGENERATE_WAKEUP {
@@ -225,7 +247,7 @@ fn mock_srv_call_in_dispatch<S: Service<u32> + 'static>(
 }
 
 fn mock_srv_call_in_spawn<S: Service<u32> + 'static>(
-    container: Container<S>,
+    container: Pipeline<S>,
     value: u32,
     complete: Condition,
     inflight: Rc<Cell<u32>>,
@@ -241,8 +263,12 @@ fn mock_srv_call_in_spawn<S: Service<u32> + 'static>(
         trace!("Dispatched mock call with value: {}", value);
 
         trace!("Waiting for mock response future with value: {}", value);
-        let _ = srv_call.await;
-        trace!("Mock response completed with value: {}", value);
+        let res = srv_call.await;
+        trace!(
+            "Mock response completed with value: {}, is_err: {}",
+            value,
+            res.is_err()
+        );
         inflight.set(inflight.get() - 1);
         complete.notify();
     });
